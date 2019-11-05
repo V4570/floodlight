@@ -251,6 +251,7 @@ ILoadBalancerService, IOFMessageListener {
 
 					IPClient client = new IPClient();
 					client.ipAddress = ip_pkt.getSourceAddress();
+					
 					client.nw_proto = ip_pkt.getProtocol();
 					if (ip_pkt.getPayload() instanceof TCP) {
 						TCP tcp_pkt = (TCP) ip_pkt.getPayload();
@@ -358,6 +359,7 @@ ILoadBalancerService, IOFMessageListener {
 							cntx, true);
 
 					counterPacketIn.increment();
+					
 					return Command.STOP;
 				}
 			}
@@ -365,7 +367,7 @@ ILoadBalancerService, IOFMessageListener {
 		// bypass non-load-balanced traffic for normal processing (forwarding)
 		return Command.CONTINUE;
 	}
-
+	
 	/**
 	 * used to send proxy Arp for load balanced service requests
 	 * @param IOFSwitch sw
@@ -412,7 +414,7 @@ ILoadBalancerService, IOFMessageListener {
 
 		return;
 	}
-
+	
 	/**
 	 * used to push any packet - borrowed routine from Forwarding
 	 * 

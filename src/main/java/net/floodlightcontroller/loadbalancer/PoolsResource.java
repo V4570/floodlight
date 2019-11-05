@@ -143,6 +143,8 @@ public class PoolsResource extends ServerResource {
 					pool.lbMethod = (short) 2;
 				} else if(method.equalsIgnoreCase("WRR")){
 					pool.lbMethod = (short) 3;
+				} else if(method.equalsIgnoreCase("DEEP_Q_LEARNING")){
+					pool.lbMethod = (short) 4;
 				}
 
 				continue;

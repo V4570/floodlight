@@ -17,16 +17,25 @@
 package net.floodlightcontroller.loadbalancer;
 
 
+import java.io.BufferedReader;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 import org.projectfloodlight.openflow.types.U64;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
@@ -57,10 +66,21 @@ public class LBPool {
 	protected final static short ROUND_ROBIN = 1;
 	protected final static short STATISTICS = 2;
 	protected final static short WEIGHTED_RR = 3;
+	protected final static short DEEP_Q_LEARNING = 4;
 
 	protected String vipId;
 
 	protected int previousMemberIndex;
+	
+	protected int MemoryMemberIndex;
+	
+	protected int MemoryIndex = 0;
+	
+	protected long startTime = System.nanoTime();
+	
+	protected int Total = 0;
+	
+	protected Map<Long, Integer> reward = new HashMap<Long, Integer>();
 
 	protected LBStats poolStats;
 
@@ -88,6 +108,8 @@ public class LBPool {
 			return "Statistics";
 		} else if (lbMethod == 3) {
 			return "Weighted Round-Robin";
+		} else if (lbMethod == 4) {
+			return "Deep Q Learning";
 		}
 		return "Invalid Method";
 	}
@@ -187,8 +209,52 @@ public class LBPool {
 
 				} else
 					return weightsToMember(membersWeight); // all members in membersWeight are considered	
+			} else if(lbMethod == DEEP_Q_LEARNING){
+				
+				long time = (System.nanoTime()- startTime)/1000000000;
+				Total++;
+				if (reward.size()>30){
+					// remove the oldest datapoint
+					reward.remove(Collections.min(reward.keySet()));
+				}
+				if(reward.get(time)==null){
+					reward.put(time, 1);
+				}else{
+					reward.put(time, reward.get(time)+1);
+				}
+					
+			    float sum = 0;
+			    long count = 0;
+			    
+			    Iterator<Long> it = reward.keySet().iterator();
+			    while (it.hasNext()) {
+			      Long y = it.next();
+			      if (y % 2 == 0) {
+			        sum = (float) (sum + reward.get(y));
+			        count++;
+			      }
+			    }
+			   float Reward = sum / count;
+			    
+				String payload = "{\"time\": "+time+", \"trans/sec\": "+Reward+" , \"total\": "+Total+"}";
+
+				if (MemoryIndex==0){
+				    sendRequest("http://127.0.0.1:5000/api/reward/",false,payload);
+
+					MemoryMemberIndex = sendRequest("http://127.0.0.1:5050/train/action/",true,null);					
+					MemoryIndex = 5;
+					System.out.print(MemoryIndex);
+					return members.get(MemoryMemberIndex);
+
+				}else{
+					MemoryIndex--;
+					System.out.print(MemoryIndex);
+					return members.get(MemoryMemberIndex);
+				}
 			}else {
-				if(LoadBalancer.isMonitoringEnabled && !monitors.isEmpty() && !memberStatus.isEmpty()){  // if health monitors active
+				int MemberIndex = sendRequest("http://127.0.0.1:5050/train/action/",true,null);// if health monitors active
+
+				if(LoadBalancer.isMonitoringEnabled && !monitors.isEmpty() && !memberStatus.isEmpty()){
 					for(int i=0;i<members.size();){
 						previousMemberIndex = (previousMemberIndex + 1) % members.size();	
 						if(memberStatus.get(members.get(previousMemberIndex)) != -1)
@@ -204,6 +270,80 @@ public class LBPool {
 		}
 		return null;
 	}
+	
+	/////////////////////////////////////////////////////////////////////////////////////////////////////
+	//CUSTOM CUSTOM CUSTOM CUSTOM CUSTOM CUSTOM//////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	private int sendRequest(String url,Boolean action, String payload){
+//		url = "http://127.0.0.1:5000/api/reward/";
+		try {
+		// URL obj = new URL(null, url, new sun.net.www.protocol.https.Handler());
+		URL obj = new URL(url);
+		HttpURLConnection con = (HttpURLConnection) obj.openConnection();
+		
+
+			if (!action){
+				//Request headers
+		 		con.setRequestMethod("POST");
+				con.setRequestProperty("Content-Type", "application/json; utf-8");
+				con.setRequestProperty("Accept", "application/json");
+				
+				con.setDoOutput(true);
+				DataOutputStream wr = new DataOutputStream(con.getOutputStream());
+				wr.writeBytes(payload);
+				wr.flush();
+				wr.close();
+				
+				int responseCode = con.getResponseCode();
+				if (responseCode!=201){
+					log.info("Posted to reward with response code: {}", responseCode);
+				}
+				
+				
+				return 0;
+			}else{
+				//Request headers
+				con.setRequestMethod("GET");
+				con.setRequestProperty("Content-Type", "application/json; utf-8");
+				con.setRequestProperty("Accept", "application/json");
+				
+			
+				int responseCode = con.getResponseCode();
+				
+				if (responseCode==200){
+		            BufferedReader br = new BufferedReader(new InputStreamReader(
+		            (con.getInputStream())));
+		            
+		            String line;
+		            while ((line = br.readLine()) != null) {
+			            String[] parts = line.split(":");
+			            if( parts[0].replaceAll("[^a-z]", "").equals("action")){
+			            	int	Index =Integer.parseInt( parts[1].replaceAll("[^0-9]",""));
+			            	return Index;
+			            }
+						// Since it's JSON, adding a newline isn't necessary (it won't affect parsing)
+		                // But it does make debugging a *lot* easier if you print out the completed
+		                // buffer for debugging.
+		            }
+		
+				}else{
+					log.info("Get action with response code: {}", responseCode);
+
+				}
+			}
+
+		} catch (MalformedURLException e) {
+			log.error("Could not find url. {}", e.getMessage());
+		} catch (IOException e) {
+			log.error("Could not create connection with url. {}", e.getMessage());
+		}
+		
+		log.error("Could not QLearning Agent");
+		return 0;
+	}
+	///////////////////////////////////////////////////////////////////////////////////////////////////////
+	//CUSTOM CUSTOM CUSTOM CUSTOM CUSTOM CUSTOM///////////////////////////////////////////////////////////
+	/////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	/**
 	 * helper function to pick a member
